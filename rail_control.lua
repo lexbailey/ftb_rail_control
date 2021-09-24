@@ -19,7 +19,9 @@ local function pendEvents()
     while not done do
         ev = {os.pullEvent()}
         done = ev[1] == "empty"
-        table.insert(my_q, 1, ev)
+        if not done then
+            table.insert(my_q, 1, ev)
+        end
     end
 end
 
@@ -112,6 +114,7 @@ while true do
         local side = message.side
         local props = {load=message.load, mode=message.mode, time=os.clock()}
         local load = props.load
+        loads[side] = props
         local mode = props.mode
         local time = props.time
         local output = ""
@@ -129,7 +132,7 @@ while true do
                 dispatch(output, "Em") -- very unlikely path
             else
                 -- re-check time is lower for unload, because it's more consistent
-                timers[os.startTimer(5)] = {task="check_load", load=load, side=side}
+                timers[os.startTimer(3)] = {task="check_load", load=load, side=side}
             end
         end
         render_gui()
@@ -166,7 +169,7 @@ while true do
                         if t.side == left_station then output = "left"; end
                         dispatch(output, "NL")
                     else
-                        timers[os.startTimer(5)] = {task="check_load", load=cur_load, side=t.side}
+                        timers[os.startTimer(3)] = {task="check_load", load=cur_load, side=t.side}
                     end
                 end
                 if mode == "drain" then
@@ -180,7 +183,7 @@ while true do
                             dispatch(output, "NS")
                         end
                     else
-                        timers[os.startTimer(5)] = {task="check_load", load=cur_load, side=t.side}
+                        timers[os.startTimer(3)] = {task="check_load", load=cur_load, side=t.side}
                     end               
                 end
             end
