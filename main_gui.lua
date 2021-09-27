@@ -5,6 +5,29 @@ modem.open(51)
 
 local cells = {}
 
+local request_channel = 30
+
+modem.open(request_channel)
+
+local function get_auto_group(name)
+    local fname = name.."_group.txt"
+    local file = fs.open(fname, "r")
+    if file == nil then
+        print("No file called "..fname)
+    else
+        local nums = {}
+        while true do
+            local line = file.readLine()
+            if line == nil then
+                break
+            end
+            local n = tonumber(line)
+            table.insert(nums, n)
+        end
+        return nums
+    end
+end
+
 local function index_to_coords(i)
     local pattern = {10,9,9,9,9,9,9,10}
     local x = 1
@@ -39,6 +62,7 @@ local function render()
     mon.setTextScale(0.5)
     local total_off = 0
     local total_on = 0
+    local total_auto = 0
     local total_empty = 0
     for index=1,74 do
         local x, y = index_to_coords(index)
@@ -46,9 +70,11 @@ local function render()
         local sy = ((y-1) * 5) + 1
         local cell = cells[index]
         local status = "empty"
+        local auto = false
         local stat_col = colors.lightBlue
-        if cell ~= nil then
-            status = cell.status
+        if cell ~= nil and cell.data ~= nil then
+            status = cell.data.ustatus
+            auto = cell.data.auto
             if status == "on" then
                 stat_col = colors.lime
                 total_on = total_on + 1
@@ -57,6 +83,11 @@ local function render()
                 total_off = total_off + 1
             else
                 stat_col = colors.red
+            end
+
+            if status ~= "on" and auto then
+                total_on = total_on + 1
+                total_auto = total_auto + 1
             end
 
             if status == "on" then status = " on  "; end
@@ -77,7 +108,16 @@ local function render()
         mon.setTextColor(colors.white)
         mon.write(" ")
         mon.setCursorPos(sx, sy+3)
-        mon.write("|      ")
+        if auto then
+            mon.write("|")
+            mon.setTextColor(colors.black)
+            mon.setBackgroundColor(colors.lime)
+            mon.write(" auto ")
+            mon.setBackgroundColor(colors.black)
+            mon.setTextColor(colors.white)
+        else
+            mon.write("|      ")
+        end
         mon.setCursorPos(sx, sy+4)
         mon.write("|      ")
         if y == 10 or (y == 9 and (x > 1 and x < 8)) then
@@ -117,17 +157,17 @@ local function render()
     mon.write(" -----V----- Available saplings -----V-----")
 
     mon.setCursorPos(120, 1)
-    mon.write("--V--  Totals  --V--")
+    mon.write(" --V--    Totals     --V--")
     mon.setCursorPos(120, 3)
     mon.setTextColor(colors.black)
     mon.setBackgroundColor(colors.lime)
-    mon.write(string.format(" %2d cells are on    ", total_on))
+    mon.write(string.format(" %2d cells are on (%2d auto) ", total_on, total_auto))
     mon.setCursorPos(120, 5)
     mon.setBackgroundColor(colors.orange)
-    mon.write(string.format(" %2d cells are off   ", total_off))
+    mon.write(string.format(" %2d cells are off          ", total_off))
     mon.setCursorPos(120, 7)
     mon.setBackgroundColor(colors.lightBlue)
-    mon.write(string.format(" %2d cells are empty ", total_empty))
+    mon.write(string.format(" %2d cells are empty        ", total_empty))
     mon.setBackgroundColor(colors.black)
     mon.setTextColor(colors.white)
 
@@ -158,8 +198,28 @@ local function poll()
     modem.transmit(50,50, {msg="poll"})
 end
 
-local function set(cell, status)
-    modem.transmit(50, 50, {msg="set", cell=cell, status=status})
+local function any_on()
+    local on = false
+    for i=1,74 do
+        local c = cells[i]
+        if c ~= nil and c.data.status == "on" then
+            on = true
+            break
+        end
+    end
+    return on
+end
+
+local function set(cell, ustatus, auto)
+    local bstatus = auto or (ustatus == "on")
+    local sstatus = "off"
+    if bstatus then
+        sstatus = "on"
+    end
+    local newdata = {status=sstatus, ustatus=ustatus, auto=auto}
+    modem.transmit(50, 50, {msg="set", cell=cell, data=newdata})
+    local need_power = any_on()
+    modem.transmit(80, 80, {msg="set_power", state=need_power})
 end
 
 poll()
@@ -169,12 +229,40 @@ while true do
     if ev[1] == "modem_message" then
         m = ev[5]
         message = m.msg
+        print(message)
         if message == "node_config" then
             for k, v in pairs(m.conf) do
                 cell = v.cell
                 cells[cell] = v
-                if v.status == nil then
-                    set(cell, "off")
+                local data = v.data
+                if data == nil then
+                    --if v.status == nil then
+                    --    set(cell, "off", false)
+                    --end
+                else
+                    if data.status == nil then
+                        set(cell, "off", false)
+                    end
+                end
+            end
+        end
+
+        if message == "produce_ctrl" then
+            local name = m.name
+            local state = m.state
+            print("Produce", name, state)
+            local nums = get_auto_group(name)
+            if nums ~= nil then
+                for k, v in pairs(nums) do
+                    if cells[v] ~= nil and cells[v].data ~= nil then
+                        cells[v].data.auto = state
+                        if cells[v].data.ustatus == nil then
+                            -- if the node is not initialised before the requestor does an auto request
+                            -- then there is no status, so set it to off so it's actually initialised
+                            cells[v].data.ustatus = "off"
+                        end
+                        set(v, cells[v].data.ustatus, cells[v].data.auto)
+                    end
                 end
             end
         end
@@ -186,13 +274,13 @@ while true do
         if index ~= nil then
             local cell = cells[index]
             if cell ~= nil then
-                local status = cell.status
+                local status = cell.data.ustatus
                 if status == "on" then
                     status = "off"
                 else
                     status = "on"
                 end
-                set(index, status)
+                set(index, status, cell.data.auto)
             end
         end
         -- x is 120 to 139
@@ -211,12 +299,12 @@ while true do
                 for index=1,74 do
                     local cell = cells[index]
                     if cell ~= nil then
-                        set(index, newstate)
+                        set(index, newstate, cell.data.auto)
                     end
                 end
             end
         end
     end
-    print(ev[1])
+    --print(ev[1])
     render()
 end

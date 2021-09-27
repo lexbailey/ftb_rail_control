@@ -28,8 +28,7 @@ local function add_config(s, side)
     if s == nil then return end
     scell, id, name = unpack(mysplit(s, "|"))
     cell = tonumber(scell)
-    print(cell, id, name, side)
-    table.insert(config, {cell=cell, id=id, name=name, side=side})
+    table.insert(config, {cell=cell, id=id, name=name, side=side, data={}})
     index_table[cell] = next_index
     next_index = next_index + 1
 end
@@ -60,9 +59,9 @@ while true do
             print("set", m.cell)
             local index = index_table[m.cell]
             if index ~= nil then
-                config[index].status = m.status
+                config[index].data = m.data
                 local side = config[index].side
-                if m.status == "on" then
+                if m.data ~= nil and m.data.status == "on" then
                     redstone.setAnalogOutput(side, 15)
                     print("Power on", side)
                 else

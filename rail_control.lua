@@ -95,9 +95,9 @@ end
 local first_poll = true
 
 local function set_empty_poll()
-    local time = 300
+    local time = 60
     if first_poll then
-        time = 30
+        time = 10
         first_poll = false
     end
     timers[os.startTimer(time)] = {task="poll_empty"}
